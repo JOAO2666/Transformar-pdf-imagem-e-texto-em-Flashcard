@@ -14,7 +14,7 @@ Um gerador inteligente de flashcards que utiliza IA (Gemini) para converter cont
 
 ## 🚀 Demo ao Vivo
 
-Acesse a aplicação: [https://joao2666.github.io/Transformar-pdf-imagem-e-texto-em-Flashcard/](https://joao2666.github.io/Transformar-pdf-imagem-e-texto-em-Flashcard/)
+Acesse a aplicação: [Gemini](https://g.co/gemini/share/470ccae87ebd)
 
 ## 🛠️ Como Usar
 
