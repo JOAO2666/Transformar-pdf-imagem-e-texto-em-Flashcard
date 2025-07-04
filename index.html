@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gerador de Flashcards para Anki com IA</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+    <script src='https://cdn.jsdelivr.net/npm/tesseract.js@2/dist/tesseract.min.js'></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .card {
+            transition: all 0.3s ease;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+        .loader {
+            border-top-color: #3498db;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        [contenteditable]:focus {
+            outline: 2px solid #3498db;
+            box-shadow: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white antialiased">
+
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl md:text-5xl font-bold text-white">Anki AI Flashcard Generator</h1>
+            <p class="text-gray-400 mt-2">Converta PDF, imagem ou texto em flashcards para o Anki usando IA.</p>
+        </header>
+
+        <div class="bg-gray-800 rounded-xl shadow-lg p-6 md:p-8">
+            <!-- Input Section -->
+            <div class="mb-6">
+                <h2 class="text-2xl font-semibold mb-4 text-white">1. Faça o upload do seu conteúdo</h2>
+                <div class="flex items-center justify-center w-full">
+                    <label for="file-upload" class="flex flex-col items-center justify-center w-full h-48 border-2 border-gray-600 border-dashed rounded-lg cursor-pointer bg-gray-700 hover:bg-gray-600 transition-colors">
+                        <div class="flex flex-col items-center justify-center pt-5 pb-6">
+                            <svg class="w-10 h-10 mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                            <p class="mb-2 text-sm text-gray-400"><span class="font-semibold">Clique para enviar</span> ou arraste e solte</p>
+                            <p class="text-xs text-gray-500">PDF, PNG, JPG ou TXT</p>
+                        </div>
+                        <input id="file-upload" type="file" class="hidden" accept=".pdf,.png,.jpg,.jpeg,.txt"/>
+                    </label>
+                </div>
+                <div id="file-info" class="mt-4 text-center text-gray-300"></div>
+            </div>
+
+            <div class="text-center mb-8">
+                <button id="generate-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg shadow-md transition-transform transform hover:scale-105 disabled:bg-gray-500 disabled:cursor-not-allowed" disabled>
+                    Gerar Flashcards com IA
+                </button>
+            </div>
+            
+            <!-- Loading and Status -->
+            <div id="status" class="text-center my-4 hidden">
+                <div class="flex items-center justify-center">
+                    <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12 mr-3"></div>
+                    <p id="status-text" class="text-lg text-gray-300">Processando...</p>
+                </div>
+            </div>
+
+            <!-- Flashcards Section -->
+            <div id="flashcards-container" class="mt-8">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-2xl font-semibold text-white">2. Revise e Exporte</h2>
+                    <button id="export-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition-transform transform hover:scale-105 hidden">
+                        Exportar para Anki (.csv)
+                    </button>
+                </div>
+                <div id="flashcards-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <!-- Flashcards will be dynamically inserted here -->
+                </div>
+                 <div id="no-cards-message" class="text-center py-12 px-6 bg-gray-700/50 rounded-lg hidden">
+                    <p class="text-gray-400">Nenhum flashcard gerado ainda. Envie um arquivo e clique em "Gerar Flashcards".</p>
+                </div>
+            </div>
+        </div>
+        <footer class="text-center mt-8 text-gray-500 text-sm">
+            <p>Criado com ❤️ por Gemini</p>
+        </footer>
+    </div>
+
+    <script>
+        // Setup PDF.js worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js`;
+
+        const fileUpload = document.getElementById('file-upload');
+        const fileInfo = document.getElementById('file-info');
+        const generateBtn = document.getElementById('generate-btn');
+        const statusDiv = document.getElementById('status');
+        const statusText = document.getElementById('status-text');
+        const flashcardsList = document.getElementById('flashcards-list');
+        const flashcardsContainer = document.getElementById('flashcards-container');
+        const exportBtn = document.getElementById('export-btn');
+        const noCardsMessage = document.getElementById('no-cards-message');
+
+        let extractedText = '';
+        let flashcards = [];
+
+        // --- FILE HANDLING ---
+        fileUpload.addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            resetState();
+            fileInfo.textContent = `Arquivo selecionado: ${file.name}`;
+            generateBtn.disabled = false;
+            extractedText = '';
+
+            const fileType = file.type;
+
+            showStatus(`Lendo o arquivo ${file.name}...`);
+            
+            try {
+                if (fileType === 'application/pdf') {
+                    extractedText = await readPdf(file);
+                } else if (fileType.startsWith('image/')) {
+                    extractedText = await readImage(file);
+                } else if (fileType === 'text/plain') {
+                    extractedText = await file.text();
+                } else {
+                    throw new Error('Tipo de arquivo não suportado.');
+                }
+                
+                if(!extractedText.trim()){
+                   throw new Error('Nenhum texto pôde ser extraído do arquivo.');
+                }
+
+                hideStatus();
+                console.log("Texto extraído:", extractedText.substring(0, 500) + "...");
+            } catch (error) {
+                showError(`Erro ao processar o arquivo: ${error.message}`);
+                generateBtn.disabled = true;
+            }
+        });
+
+        async function readPdf(file) {
+            const fileReader = new FileReader();
+            return new Promise((resolve, reject) => {
+                fileReader.onload = async function() {
+                    const typedarray = new Uint8Array(this.result);
+                    try {
+                        const pdf = await pdfjsLib.getDocument(typedarray).promise;
+                        let fullText = '';
+                        for (let i = 1; i <= pdf.numPages; i++) {
+                            const page = await pdf.getPage(i);
+                            const textContent = await page.getTextContent();
+                            fullText += textContent.items.map(item => item.str).join(' ') + '\n';
+                        }
+                        resolve(fullText);
+                    } catch (error) {
+                        reject(error);
+                    }
+                };
+                fileReader.readAsArrayBuffer(file);
+            });
+        }
+
+        async function readImage(file) {
+            statusText.textContent = 'Analisando imagem com OCR... (isso pode levar um momento)';
+            const { data: { text } } = await Tesseract.recognize(file, 'por', {
+                logger: m => console.log(m) 
+            });
+            return text;
+        }
+
+        // --- UI AND STATE MANAGEMENT ---
+        function resetState() {
+            flashcards = [];
+            extractedText = '';
+            flashcardsList.innerHTML = '';
+            fileInfo.textContent = '';
+            generateBtn.disabled = true;
+            exportBtn.classList.add('hidden');
+            noCardsMessage.classList.add('hidden');
+        }
+
+        function showStatus(message) {
+            statusText.textContent = message;
+            statusDiv.classList.remove('hidden');
+        }
+
+        function hideStatus() {
+            statusDiv.classList.add('hidden');
+        }
+        
+        function showError(message) {
+            statusText.textContent = message;
+            statusText.classList.add('text-red-400');
+            statusDiv.classList.remove('hidden');
+            setTimeout(() => {
+                statusText.classList.remove('text-red-400');
+                hideStatus();
+            }, 5000);
+        }
+
+        function renderFlashcards() {
+            flashcardsList.innerHTML = '';
+            if (flashcards.length === 0) {
+                noCardsMessage.classList.remove('hidden');
+                exportBtn.classList.add('hidden');
+                return;
+            }
+            
+            noCardsMessage.classList.add('hidden');
+            exportBtn.classList.remove('hidden');
+
+            flashcards.forEach((card, index) => {
+                const cardElement = document.createElement('div');
+                cardElement.className = 'card bg-gray-700 rounded-lg p-4 flex flex-col justify-between shadow-md';
+                cardElement.innerHTML = `
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Frente (Pergunta)</label>
+                        <div contenteditable="true" data-index="${index}" data-field="question" class="w-full p-2 bg-gray-800 rounded-md text-white min-h-[60px]">${card.question}</div>
+                    </div>
+                    <div class="my-3 border-t border-gray-600"></div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Verso (Resposta)</label>
+                        <div contenteditable="true" data-index="${index}" data-field="answer" class="w-full p-2 bg-gray-800 rounded-md text-white min-h-[80px]">${card.answer}</div>
+                    </div>
+                    <button data-index="${index}" class="delete-btn mt-4 text-red-400 hover:text-red-300 text-xs self-end">Remover</button>
+                `;
+                flashcardsList.appendChild(cardElement);
+            });
+        }
+        
+        // Initial render for the message
+        renderFlashcards();
+
+        // --- EVENT LISTENERS ---
+        generateBtn.addEventListener('click', handleGeneration);
+        exportBtn.addEventListener('click', exportToCsv);
+
+        flashcardsList.addEventListener('click', (e) => {
+            if (e.target.classList.contains('delete-btn')) {
+                const index = e.target.dataset.index;
+                flashcards.splice(index, 1);
+                renderFlashcards();
+            }
+        });
+
+        flashcardsList.addEventListener('input', (e) => {
+            if (e.target.isContentEditable) {
+                const index = e.target.dataset.index;
+                const field = e.target.dataset.field;
+                flashcards[index][field] = e.target.innerHTML; // Using innerHTML to keep formatting like line breaks
+            }
+        });
+        
+        // --- CORE LOGIC: AI and EXPORT ---
+        async function handleGeneration() {
+            if (!extractedText.trim()) {
+                showError("Nenhum texto para processar. Por favor, envie um arquivo válido.");
+                return;
+            }
+            showStatus('A IA está criando os flashcards... Por favor, aguarde.');
+            generateBtn.disabled = true;
+
+            const prompt = `
+                Com base no seguinte texto, gere um conjunto de flashcards de pergunta e resposta.
+                As perguntas devem ser claras e as respostas concisas e informativas.
+                Foque nos conceitos, definições e fatos mais importantes do texto.
+                
+                Texto:
+                """
+                ${extractedText.substring(0, 8000)}
+                """
+            `;
+            
+            try {
+                // This is where you call the Gemini API
+                let chatHistory = [];
+                chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+                
+                const payload = {
+                    contents: chatHistory,
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: {
+                            type: "OBJECT",
+                            properties: {
+                                "flashcards": {
+                                    "type": "ARRAY",
+                                    "items": {
+                                        "type": "OBJECT",
+                                        "properties": {
+                                            "question": { "type": "STRING" },
+                                            "answer": { "type": "STRING" }
+                                        },
+                                        "required": ["question", "answer"]
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+                const apiKey = ""; // The environment will provide the key
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+                
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) {
+                    const errorBody = await response.text();
+                    throw new Error(`API Error: ${response.status} ${response.statusText} - ${errorBody}`);
+                }
+
+                const result = await response.json();
+                
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+                    
+                    const jsonText = result.candidates[0].content.parts[0].text;
+                    const parsedJson = JSON.parse(jsonText);
+                    
+                    if (parsedJson.flashcards && parsedJson.flashcards.length > 0) {
+                        flashcards = parsedJson.flashcards;
+                        renderFlashcards();
+                    } else {
+                        throw new Error("A IA não retornou nenhum flashcard.");
+                    }
+                } else {
+                    console.error("Resposta inesperada da API:", result);
+                    throw new Error("A resposta da API estava vazia ou em um formato inesperado.");
+                }
+
+            } catch (error) {
+                console.error('Erro ao gerar flashcards:', error);
+                showError(`Falha ao gerar flashcards: ${error.message}`);
+            } finally {
+                hideStatus();
+                generateBtn.disabled = false;
+            }
+        }
+
+        function exportToCsv() {
+            if (flashcards.length === 0) {
+                showError("Não há flashcards para exportar.");
+                return;
+            }
+
+            // Anki's default CSV format uses semicolons if fields contain HTML/commas
+            // We wrap fields in quotes to be safe.
+            let csvContent = "data:text/csv;charset=utf-8,";
+            
+            flashcards.forEach(card => {
+                // Replace newlines inside contenteditable divs with <br> for Anki import
+                const front = `"${card.question.replace(/"/g, '""').replace(/\n/g, '<br>')}"`;
+                const back = `"${card.answer.replace(/"/g, '""').replace(/\n/g, '<br>')}"`;
+                csvContent += `${front};${back}\r\n`;
+            });
+
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", "flashcards_anki.csv");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+    </script>
+</body>
+</html>
